@@ -27,7 +27,7 @@ on:
 
       # ── 构建目标 ────────────────────────────────────────────
       platforms:
-        description: '构建平台，逗号分隔（android,windows,linux,macos,ios,openwrt），留空=全部'
+        description: '构建平台，逗号分隔（android,windows,linux,macos,ios），留空=全部'
         required: false
         default: ''
 
@@ -1216,7 +1216,7 @@ jobs:
             codesign --force --deep --sign - "$fw" 2>/dev/null || true
           done
 
-          # 签名主 App（ad-hoc，与 FlClash 上游一致）
+          # 签名主 App
           codesign --force --deep --sign - "$APP_DIR"
           echo "[sign] ✅ Ad-hoc signed: $APP_DIR"
 
@@ -1382,10 +1382,9 @@ jobs:
           LABELS = {
               "android-mobile": "📱 Android 手机版",
               "android-tv":     "📺 Android TV版",
-              "windows-amd64":    "🖥️ Windows (x64)",
-              "macos-universal":  "🍏 macOS (Universal)",
-              "linux-amd64":      "🐧 Linux (x64)",
-              "ios-arm64":        "🍎 iOS",
+              "windows-amd64":    "Windows (x64)",
+              "macos-universal":  "macOS (Universal)",
+              "linux-amd64":      "Linux (x64)",
           }
           # Android 用 flavor 作 key（android-mobile / android-tv），其他平台用 arch
           lookup_key = f"{platform}-{flavor}" if flavor else f"{platform}-{arch}"
@@ -1486,151 +1485,9 @@ jobs:
               })
           PYEOF
 
-  # ── OpenWrt：交叉编译 mihomo 核心（全架构合并为一个 artifact）──
-  openwrt:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: |
-      github.event_name == 'push' ||
-      inputs.platforms == '' ||
-      contains(inputs.platforms, 'openwrt')
-
-    steps:
-      - name: Configure git credentials
-        run: |
-          git config --global credential.helper ""
-          git config --global url."https://x-access-token:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "git@github.com:"
-          git config --global url."https://x-access-token:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
-      - name: Checkout private source
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.PRIVATE_REPO_NAME }}
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          submodules: recursive
-          ref: ${{ env.PRIVATE_REF }}
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          cache: false
-
-      - name: Get version
-        id: version
-        run: |
-          VER=$(grep -oP 'version:\s*\K[\d.]+' pubspec.yaml || echo "0.0.0")
-          echo "version=$VER" >> $GITHUB_OUTPUT
-
-      - name: Build all OpenWrt architectures
-        run: |
-          set -e
-          VER="${{ steps.version.outputs.version }}"
-          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          APP_NAME="${{ inputs.app_name || 'mihomo' }}"
-          LDFLAGS="-w -s -X 'github.com/metacubex/mihomo/constant.Version=$VER' -X 'github.com/metacubex/mihomo/constant.BuildTime=$BUILD_TIME'"
-          CORE_DIR="core/Clash.Meta"
-          mkdir -p dist
-
-          build_arch() {
-            local arch="$1" goarch="$2" goarm="$3" gomips="$4"
-            echo "=== Building $arch ==="
-
-            GOOS=linux GOARCH="$goarch" GOARM="$goarm" GOMIPS="$gomips" CGO_ENABLED=0 \
-              go build -C "$CORE_DIR" -tags="with_gvisor" -trimpath -ldflags="$LDFLAGS" -o "/tmp/mihomo-$arch"
-
-            local pkg="/tmp/pkg-$arch"
-            mkdir -p "$pkg/usr/bin" "$pkg/etc/init.d" "$pkg/etc/config" "$pkg/etc/mihomo" "$pkg/etc/uci-defaults"
-
-            cp "/tmp/mihomo-$arch" "$pkg/usr/bin/mihomo"
-            chmod +x "$pkg/usr/bin/mihomo"
-            cp openwrt/etc/init.d/mihomo "$pkg/etc/init.d/mihomo"
-            chmod +x "$pkg/etc/init.d/mihomo"
-            cp openwrt/etc/config/mihomo "$pkg/etc/config/mihomo"
-            cp openwrt/etc/mihomo/config.yaml "$pkg/etc/mihomo/config.yaml"
-            cp openwrt/etc/uci-defaults/99-mihomo "$pkg/etc/uci-defaults/99-mihomo"
-            chmod +x "$pkg/etc/uci-defaults/99-mihomo"
-
-            (cd "$pkg" && tar czf "$GITHUB_WORKSPACE/dist/${APP_NAME}-openwrt-${arch}-${VER}.tar.gz" .)
-            rm -rf "$pkg" "/tmp/mihomo-$arch"
-          }
-
-          build_arch amd64           amd64   "" ""
-          build_arch arm64           arm64   "" ""
-          build_arch armv7           arm     7  ""
-          build_arch armv5           arm     5  ""
-          build_arch mips-softfloat  mips    "" softfloat
-          build_arch mipsle-softfloat mipsle "" softfloat
-
-          echo "=== All OpenWrt packages ==="
-          ls -lh dist/
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: artifact-openwrt
-          path: dist/*
-          compression-level: 0
-
-      # ── OpenWrt 构建完成通知 ──
-      - name: Notify Telegram
-        if: |
-          always() &&
-          github.event_name == 'workflow_dispatch' &&
-          inputs.notify_chat_id != ''
-        env:
-          BOT_TOKEN:  ${{ secrets.BUILD_BOT_TOKEN }}
-          CHAT_ID:    ${{ inputs.notify_chat_id }}
-          RUN_URL:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          JOB_STATUS: ${{ job.status }}
-          PYTHONUTF8: "1"
-        run: |
-          python3 -X utf8 - << 'PYEOF'
-          import os, sys, json, urllib.request
-          from pathlib import Path
-
-          bot_token = os.environ.get("BOT_TOKEN", "").strip()
-          if not bot_token:
-              sys.exit(0)
-
-          chat_id    = os.environ.get("CHAT_ID", "").strip()
-          run_url    = os.environ.get("RUN_URL", "").strip()
-          job_status = os.environ.get("JOB_STATUS", "").strip()
-          API        = f"https://api.telegram.org/bot{bot_token}"
-          label      = "📡 OpenWrt"
-
-          def send_json(endpoint, data):
-              req = urllib.request.Request(
-                  f"{API}/{endpoint}",
-                  data=json.dumps(data).encode("utf-8"),
-                  headers={"Content-Type": "application/json"},
-              )
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as r:
-                      return json.loads(r.read())
-              except Exception as e:
-                  print(f"[notify] {endpoint} error: {e}")
-                  return {}
-
-          if job_status == "success":
-              dist = Path("dist")
-              files = sorted(f.name for f in dist.rglob("*") if f.is_file()) if dist.exists() else []
-              file_list = "\n".join(f"• `{f}`" for f in files) if files else "（无文件）"
-              msg = f"✅ *{label}* 构建完成（6 个架构）\n\n{file_list}\n\n🔗 [前往 Actions 下载]({run_url})\n⚠️ 需登录 GitHub 账号"
-          else:
-              msg = f"❌ *{label}* 构建失败 — [查看日志]({run_url})"
-
-          send_json("sendMessage", {
-              "chat_id": chat_id,
-              "text": msg,
-              "parse_mode": "Markdown",
-              "disable_web_page_preview": True,
-          })
-          PYEOF
-
   # ── Release：打 tag 时自动发布到本公共仓库 ──────────────────
   release:
-    needs: [build, openwrt]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
