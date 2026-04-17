@@ -175,8 +175,8 @@ jobs:
       - name: Configure git credentials
         run: |
           git config --global credential.helper ""
-          git config --global url."https://x-access-token:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "git@github.com:"
-          git config --global url."https://x-access-token:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token: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@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token: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@github.com/".insteadOf "https://github.com/"
 
       # ── 1. 拉取私有源码 ─────────────────────────────────────
       - name: Checkout private source
@@ -184,8 +184,8 @@ jobs:
           GIT_TERMINAL_PROMPT: "0"
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.PRIVATE_REPO_NAME }}
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          repository: xiaolanchuan/vpn_client_v2b
+          token: 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
           submodules: recursive
           ref: ${{ env.PRIVATE_REF }}
 
@@ -1499,14 +1499,14 @@ jobs:
       - name: Configure git credentials
         run: |
           git config --global credential.helper ""
-          git config --global url."https://x-access-token:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "git@github.com:"
-          git config --global url."https://x-access-token:${{ secrets.PRIVATE_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token: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@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token: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@github.com/".insteadOf "https://github.com/"
 
       - name: Checkout private source
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.PRIVATE_REPO_NAME }}
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          repository: xiaolanchuan/vpn_client_v2b
+          token: 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
           submodules: recursive
           ref: ${{ env.PRIVATE_REF }}
 
